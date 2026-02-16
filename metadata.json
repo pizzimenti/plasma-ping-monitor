@@ -1,0 +1,17 @@
+{
+    "KPlugin": {
+        "Id": "org.kde.plasma.pingmonitor",
+        "Name": "Ping Monitor",
+        "Description": "Displays ping latency to 1.1.1.1 on a rolling line graph",
+        "Category": "Network",
+        "Icon": "network-wired",
+        "Authors": [
+            {
+                "Name": "User"
+            }
+        ],
+        "License": "GPL-2.0+"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
