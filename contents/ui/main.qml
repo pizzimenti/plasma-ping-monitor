@@ -32,7 +32,6 @@ PlasmoidItem {
     property real gTo: -1
     property real gStartTime: 0
 
-    readonly property real easeDuration: 800
     readonly property real windowSecs: 30
     readonly property int gridIntervals: 2
     readonly property int gridLineCount: gridIntervals + 1
@@ -81,17 +80,6 @@ PlasmoidItem {
         return two(d.getHours()) + ":" + two(d.getMinutes()) + ":" + two(d.getSeconds())
     }
 
-    // Smooth S-curve interpolation used for point transitions.
-    function smoothstep(t) {
-        if (t <= 0) {
-            return 0
-        }
-        if (t >= 1) {
-            return 1
-        }
-        return t * t * (3 - 2 * t)
-    }
-
     // Axis scale: 2 chunks (3 lines), at least 25ms per chunk (minimum range 0..100ms).
     function axisStepMs() {
         var base = Math.max(100, displayMaxPing)
@@ -116,10 +104,11 @@ PlasmoidItem {
                 cfFrom = -1
                 cfTo = -1
             } else {
-                cfFrom = displayCf >= 0 ? displayCf : value
+                cfFrom = value
                 cfTo = value
                 cfStartTime = now
                 currentPingCf = value
+                displayCf = value
                 lastPingReceivedText = formatHms(now)
             }
         } else {
@@ -129,10 +118,11 @@ PlasmoidItem {
                 gFrom = -1
                 gTo = -1
             } else {
-                gFrom = displayG >= 0 ? displayG : value
+                gFrom = value
                 gTo = value
                 gStartTime = now
                 currentPingG = value
+                displayG = value
                 lastPingReceivedText = formatHms(now)
             }
         }
@@ -297,8 +287,11 @@ PlasmoidItem {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: Kirigami.Units.smallSpacing * 2
-            spacing: Kirigami.Units.smallSpacing
+            anchors.leftMargin: Kirigami.Units.smallSpacing * 2
+            anchors.rightMargin: Kirigami.Units.smallSpacing * 2
+            anchors.topMargin: 2
+            anchors.bottomMargin: 2
+            spacing: 2
 
             RowLayout {
                 Layout.fillWidth: true
@@ -310,7 +303,7 @@ PlasmoidItem {
                     Text {
                         text: "1.1.1.1"
                         color: Kirigami.Theme.textColor
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.5
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.75
                         opacity: 0.8
                     }
                 }
@@ -321,7 +314,7 @@ PlasmoidItem {
                     Text {
                         text: "8.8.8.8"
                         color: Kirigami.Theme.textColor
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.5
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.75
                         opacity: 0.8
                     }
                 }
@@ -607,14 +600,6 @@ PlasmoidItem {
                             var oldG = root.displayG
                             var oldAxisTop = root.axisTopMs()
 
-                            if (root.currentPingCf >= 0 && root.cfStartTime > 0 && root.cfTo >= 0) {
-                                var tCf = (now - root.cfStartTime) / root.easeDuration
-                                root.displayCf = root.cfFrom + (root.cfTo - root.cfFrom) * root.smoothstep(tCf)
-                            }
-                            if (root.currentPingG >= 0 && root.gStartTime > 0 && root.gTo >= 0) {
-                                var tG = (now - root.gStartTime) / root.easeDuration
-                                root.displayG = root.gFrom + (root.gTo - root.gFrom) * root.smoothstep(tG)
-                            }
                             var maxDelta = root.maxPing - root.displayMaxPing
                             if (Math.abs(maxDelta) > 0.25) {
                                 root.displayMaxPing += maxDelta * 0.2
@@ -816,10 +801,12 @@ PlasmoidItem {
 
             Text {
                 Layout.fillWidth: true
+                Layout.preferredHeight: Math.ceil(font.pixelSize * 1.05)
                 horizontalAlignment: Text.AlignLeft
+                verticalAlignment: Text.AlignVCenter
                 text: "last ping received: " + root.lastPingReceivedText
                 color: Qt.rgba(1, 1, 1, 0.45)
-                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.75
                 opacity: 1
             }
         }
