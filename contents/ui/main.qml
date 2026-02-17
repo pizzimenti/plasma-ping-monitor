@@ -45,8 +45,8 @@ PlasmoidItem {
     readonly property string sessionToken: "" + Math.floor(Math.random() * 1000000000) + "-" + Date.now()
     readonly property string cfLogPath: "/tmp/plasma-pingmonitor-cf-" + sessionToken + ".log"
     readonly property string gLogPath: "/tmp/plasma-pingmonitor-g-" + sessionToken + ".log"
-    readonly property string startCfCmd: "sh -c 'ping -n -O -i 2 -W 1 1.1.1.1 > " + cfLogPath + " 2>&1 & echo $!'"
-    readonly property string startGCmd: "sh -c 'ping -n -O -i 2 -W 1 8.8.8.8 > " + gLogPath + " 2>&1 & echo $!'"
+    readonly property string startCfCmd: "sh -c 'ping -n -O -i 1 -W 1 1.1.1.1 > " + cfLogPath + " 2>&1 & echo $!'"
+    readonly property string startGCmd: "sh -c 'ping -n -O -i 1 -W 1 8.8.8.8 > " + gLogPath + " 2>&1 & echo $!'"
     readonly property string pollCfCmd: "tail -n 4 " + cfLogPath
     readonly property string pollGCmd: "tail -n 4 " + gLogPath
     property int cfPid: -1
@@ -154,7 +154,21 @@ PlasmoidItem {
     function processPingSnapshot(stdout, isCf) {
         var lines = stdout.split(/\r?\n/)
         for (var i = lines.length - 1; i >= 0; --i) {
-            if (processPingLine(lines[i], isCf)) {
+            var line = lines[i]
+            if (!line || line.length === 0) {
+                continue
+            }
+            var m = line.match(/time[=<]([\d.]+)\s*ms/)
+            var l = line.toLowerCase()
+            var timeoutish = (l.indexOf("no answer yet") !== -1
+                    || l.indexOf("timeout") !== -1
+                    || l.indexOf("unreachable") !== -1
+                    || l.indexOf("100% packet loss") !== -1)
+            if (!m && !timeoutish) {
+                continue
+            }
+
+            if (processPingLine(line, isCf)) {
                 return
             }
         }
@@ -215,7 +229,7 @@ PlasmoidItem {
 
     Timer {
         id: startGProcess
-        interval: 1000
+        interval: 500
         running: true
         repeat: false
         triggeredOnStart: false
@@ -225,7 +239,7 @@ PlasmoidItem {
     // Poll latest output from each long-running ping process.
     Timer {
         id: pollCfTimer
-        interval: 2000
+        interval: 1000
         running: true
         repeat: true
         triggeredOnStart: true
@@ -234,7 +248,7 @@ PlasmoidItem {
 
     Timer {
         id: pollGTimer
-        interval: 2000
+        interval: 1000
         running: false
         repeat: true
         triggeredOnStart: false
@@ -243,7 +257,7 @@ PlasmoidItem {
 
     Timer {
         id: startPollG
-        interval: 1000
+        interval: 500
         running: true
         repeat: false
         onTriggered: pollGTimer.start()
@@ -359,7 +373,7 @@ PlasmoidItem {
                     anchors.fill: parent
 
                     readonly property real padY: 12
-                    readonly property real rightMargin: 90
+                    readonly property real rightMargin: 58
                     readonly property real chartW: Math.max(0, width - rightMargin)
                     readonly property real chartH: Math.max(0, height - padY * 2)
                     // 2px sampling halves geometry work while remaining visually smooth.
@@ -579,11 +593,11 @@ PlasmoidItem {
                         updateLiveLabels()
                     }
 
-                    Timer {
-                        id: chartUpdateTimer
-                        interval: chartView.idleMode ? 500 : 50
-                        repeat: true
-                        running: chartView.visible
+    Timer {
+        id: chartUpdateTimer
+        interval: chartView.idleMode ? 2000 : 500
+        repeat: true
+        running: chartView.visible
                         onTriggered: {
                             var now = Date.now()
                             if (chartView.lastTickTime === 0) {
@@ -769,10 +783,10 @@ PlasmoidItem {
                     Text {
                         parent: blurScene
                         visible: chartView.cachedCfY >= 0
-                        text: root.displayCf.toFixed(1) + " ms"
+                        text: Math.round(root.displayCf) + "ms"
                         color: root.cfColor
                         font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.5
-                        x: chartView.chartW + 10
+                        x: chartView.chartW + 6
                         y: chartView.cachedCfLabelY - height / 2
                     }
 
@@ -790,10 +804,10 @@ PlasmoidItem {
                     Text {
                         parent: blurScene
                         visible: chartView.cachedGY >= 0
-                        text: root.displayG.toFixed(1) + " ms"
+                        text: Math.round(root.displayG) + "ms"
                         color: root.gColor
                         font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.5
-                        x: chartView.chartW + 10
+                        x: chartView.chartW + 6
                         y: chartView.cachedGLabelY - height / 2
                     }
                 }
