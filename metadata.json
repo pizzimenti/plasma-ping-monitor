@@ -2,13 +2,13 @@
     "KPlugin": {
         "Id": "org.kde.plasma.pingmonitor",
         "Name": "Ping Monitor",
-        "Description": "Displays ping latency to Cloudflare (1.1.1.1) and Google DNS (8.8.8.8) on a rolling 60s line graph\n",
+        "Description": "Displays ping latency to Cloudflare (1.1.1.1) and Google DNS (8.8.8.8) on a rolling 30s line graph\n",
         "Version": "1.0",
         "Category": "Network",
-        "Icon": "network-wired",
+        "Icon": "org.kde.plasma.pingmonitor",
         "Authors": [
             {
-                "Name": "User"
+                "Name": "Bradley Pizzimenti"
             }
         ],
         "License": "GPL-2.0+"

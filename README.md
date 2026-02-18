@@ -1,6 +1,6 @@
 # Ping Monitor (plasmoid)
 
-A small KDE Plasma plasmoid that pings two hosts (1.1.1.1 and 8.8.8.8) and displays a 60s RTT chart.
+A small KDE Plasma plasmoid that pings two hosts (1.1.1.1 and 8.8.8.8) and displays a 30s RTT chart.
 
 Development
 - Edit sources in `~/Code/org.kde.plasma.pingmonitor` (this is the development copy).

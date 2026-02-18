@@ -13,61 +13,116 @@ PlasmoidItem {
     preferredRepresentation: fullRepresentation
 
     // Latest parsed ping values (ms); -1 means timeout/unavailable.
-    property real currentPingCf: -1
-    property real currentPingG: -1
+    property real currentCloudflarePing: -1
+    property real currentGooglePing: -1
+    property real currentGatewayPing: -1
 
     // Dynamic Y-scale target and eased display value for the chart.
     property real maxPing: 100
     property real displayMaxPing: 100
 
     // Smoothed values currently rendered in the chart/labels.
-    property real displayCf: -1
-    property real displayG: -1
+    property real displayCloudflarePing: -1
+    property real displayGooglePing: -1
+    property real displayGatewayPing: -1
 
     // Easing state for each provider.
-    property real cfFrom: -1
-    property real cfTo: -1
-    property real cfStartTime: 0
-    property real gFrom: -1
-    property real gTo: -1
-    property real gStartTime: 0
+    property real cloudflareFrom: -1
+    property real cloudflareTo: -1
+    property real cloudflareStartTime: 0
+    property real googleFrom: -1
+    property real googleTo: -1
+    property real googleStartTime: 0
+    property real gatewayFrom: -1
+    property real gatewayTo: -1
+    property real gatewayStartTime: 0
 
     readonly property real windowSecs: 30
     readonly property int gridIntervals: 2
     readonly property int gridLineCount: gridIntervals + 1
 
-    readonly property color cfColor: Kirigami.Theme.positiveTextColor
-    readonly property color gColor: Kirigami.Theme.negativeTextColor
+    readonly property color cloudflareColor: Kirigami.Theme.positiveTextColor
+    readonly property color googleColor: Kirigami.Theme.negativeTextColor
+    readonly property color gatewayColor: "#4aa3ff"
 
     property bool shuttingDown: false
 
-    // One persistent ping process per host, writing to per-widget temp logs.
-    readonly property string sessionToken: "" + Math.floor(Math.random() * 1000000000) + "-" + Date.now()
-    readonly property string cfLogPath: "/tmp/plasma-pingmonitor-cf-" + sessionToken + ".log"
-    readonly property string gLogPath: "/tmp/plasma-pingmonitor-g-" + sessionToken + ".log"
-    readonly property string startCfCmd: "sh -c 'ping -n -O -i 1 -W 1 1.1.1.1 > " + cfLogPath + " 2>&1 & echo $!'"
-    readonly property string startGCmd: "sh -c 'ping -n -O -i 1 -W 1 8.8.8.8 > " + gLogPath + " 2>&1 & echo $!'"
-    readonly property string pollCfCmd: "tail -n 4 " + cfLogPath
-    readonly property string pollGCmd: "tail -n 4 " + gLogPath
-    property int cfPid: -1
-    property int gPid: -1
-    property string checkCfCmd: ""
-    property string checkGCmd: ""
+    // One-shot ping commands, launched by timers.
+    readonly property string gatewayQueryCmd: "sh -c 'ip route show default 2>/dev/null | awk '\\''/default/ {print $3; exit}'\\'''"
+    property string gatewayIp: ""
+    property bool gatewayOnline: false
+    readonly property string cloudflarePingCmd: "ping -n -c 1 -W 1 1.1.1.1"
+    readonly property string googlePingCmd: "ping -n -c 1 -W 1 8.8.8.8"
+    property string gatewayPingCmd: gatewayIp.length > 0 ? "ping -n -c 1 -W 1 " + gatewayIp : ""
+    property bool cloudflarePingInFlight: false
+    property bool googlePingInFlight: false
+    property bool gatewayPingInFlight: false
+    property string gatewayPingCmdInFlight: ""
+    property int pingCycleIndex: 0
     property string lastPingReceivedText: "--:--:--"
 
-    function processCheckCmd(pid) {
-        return "sh -c 'kill -0 " + pid + " 2>/dev/null && echo up || echo down'"
-    }
-
-    function requestStartCf() {
+    function requestCloudflarePing() {
+        if (cloudflarePingInFlight) {
+            return
+        }
         if (!shuttingDown) {
-            executable.connectSource(startCfCmd)
+            cloudflarePingInFlight = true
+            executable.connectSource(cloudflarePingCmd)
         }
     }
 
-    function requestStartG() {
+    function requestGooglePing() {
+        if (googlePingInFlight) {
+            return
+        }
         if (!shuttingDown) {
-            executable.connectSource(startGCmd)
+            googlePingInFlight = true
+            executable.connectSource(googlePingCmd)
+        }
+    }
+
+    function requestGatewayPing() {
+        if (gatewayPingInFlight) {
+            return
+        }
+        if (!shuttingDown && gatewayIp.length > 0 && gatewayPingCmd.length > 0) {
+            gatewayPingInFlight = true
+            gatewayPingCmdInFlight = gatewayPingCmd
+            executable.connectSource(gatewayPingCmdInFlight)
+        }
+    }
+
+    function requestNextPing() {
+        var target = pingCycleIndex
+        pingCycleIndex = (pingCycleIndex + 1) % 3
+
+        if (target === 0) {
+            requestCloudflarePing()
+        } else if (target === 1) {
+            requestGooglePing()
+        } else {
+            if (gatewayIp.length > 0) {
+                requestGatewayPing()
+            } else {
+                applyPing("gateway", -1)
+            }
+        }
+    }
+
+    function updateGatewayIp(newIp) {
+        var ip = (newIp || "").trim()
+        if (ip === gatewayIp) {
+            return
+        }
+        gatewayIp = ip
+        if (gatewayIp.length === 0) {
+            applyPing("gateway", -1)
+        } else if (gatewayIp.length > 0) {
+            gatewayOnline = false
+            currentGatewayPing = -1
+            displayGatewayPing = -1
+            gatewayFrom = -1
+            gatewayTo = -1
         }
     }
 
@@ -93,50 +148,65 @@ PlasmoidItem {
 
     // Parse-independent ping application path used by both providers.
     // `ping` is in ms; invalid/timeout values are normalized to -1.
-    function applyPing(isCf, ping) {
+    function applyPing(target, ping) {
         var value = (ping >= 0 && ping < 1000) ? ping : -1
         var now = Date.now()
 
-        if (isCf) {
+        if (target === "cloudflare") {
             if (value < 0) {
-                currentPingCf = -1
-                displayCf = -1
-                cfFrom = -1
-                cfTo = -1
+                currentCloudflarePing = -1
+                displayCloudflarePing = -1
+                cloudflareFrom = -1
+                cloudflareTo = -1
             } else {
-                cfFrom = value
-                cfTo = value
-                cfStartTime = now
-                currentPingCf = value
-                displayCf = value
+                cloudflareFrom = value
+                cloudflareTo = value
+                cloudflareStartTime = now
+                currentCloudflarePing = value
+                displayCloudflarePing = value
                 lastPingReceivedText = formatHms(now)
             }
-        } else {
+        } else if (target === "google") {
             if (value < 0) {
-                currentPingG = -1
-                displayG = -1
-                gFrom = -1
-                gTo = -1
+                currentGooglePing = -1
+                displayGooglePing = -1
+                googleFrom = -1
+                googleTo = -1
             } else {
-                gFrom = value
-                gTo = value
-                gStartTime = now
-                currentPingG = value
-                displayG = value
+                googleFrom = value
+                googleTo = value
+                googleStartTime = now
+                currentGooglePing = value
+                displayGooglePing = value
                 lastPingReceivedText = formatHms(now)
+            }
+        } else if (target === "gateway") {
+            if (value < 0) {
+                currentGatewayPing = -1
+                displayGatewayPing = -1
+                gatewayFrom = -1
+                gatewayTo = -1
+                gatewayOnline = false
+            } else {
+                gatewayFrom = value
+                gatewayTo = value
+                gatewayStartTime = now
+                currentGatewayPing = value
+                displayGatewayPing = value
+                gatewayOnline = true
             }
         }
 
     }
 
-    function processPingLine(line, isCf) {
+    function processPingLine(line, target) {
         if (!line || line.length === 0) {
             return false
         }
 
         var match = line.match(/time[=<]([\d.]+)\s*ms/)
         if (match) {
-            applyPing(isCf, parseFloat(match[1]))
+            applyPing(target, parseFloat(match[1]))
             return true
         }
 
@@ -145,13 +215,13 @@ PlasmoidItem {
                 || lower.indexOf("timeout") !== -1
                 || lower.indexOf("unreachable") !== -1
                 || lower.indexOf("100% packet loss") !== -1) {
-            applyPing(isCf, -1)
+            applyPing(target, -1)
             return true
         }
         return false
     }
 
-    function processPingSnapshot(stdout, isCf) {
+    function processPingSnapshot(stdout, target) {
         var lines = stdout.split(/\r?\n/)
         for (var i = lines.length - 1; i >= 0; --i) {
             var line = lines[i]
@@ -168,18 +238,11 @@ PlasmoidItem {
                 continue
             }
 
-            if (processPingLine(line, isCf)) {
-                return
+            if (processPingLine(line, target)) {
+                return true
             }
         }
-    }
-
-    function parsePid(stdout) {
-        var m = stdout.match(/(\d+)\s*$/)
-        if (!m) {
-            return -1
-        }
-        return parseInt(m[1])
+        return false
     }
 
     // Plasma executable engine runs ping commands asynchronously.
@@ -190,101 +253,50 @@ PlasmoidItem {
 
         onNewData: function(source, data) {
             var stdout = data["stdout"] || ""
-            if (source === root.startCfCmd) {
-                root.cfPid = root.parsePid(stdout)
-                root.checkCfCmd = (root.cfPid > 0) ? root.processCheckCmd(root.cfPid) : ""
-            } else if (source === root.startGCmd) {
-                root.gPid = root.parsePid(stdout)
-                root.checkGCmd = (root.gPid > 0) ? root.processCheckCmd(root.gPid) : ""
-            } else if (source === root.pollCfCmd) {
-                root.processPingSnapshot(stdout, true)
-            } else if (source === root.pollGCmd) {
-                root.processPingSnapshot(stdout, false)
-            } else if (source === root.checkCfCmd) {
-                if (stdout.indexOf("up") === -1) {
-                    root.cfPid = -1
-                    root.checkCfCmd = ""
-                    root.requestStartCf()
+            if (source === root.gatewayQueryCmd) {
+                root.updateGatewayIp(stdout)
+            } else if (source === root.cloudflarePingCmd) {
+                root.cloudflarePingInFlight = false
+                if (!root.processPingSnapshot(stdout, "cloudflare")) {
+                    root.applyPing("cloudflare", -1)
                 }
-            } else if (source === root.checkGCmd) {
-                if (stdout.indexOf("up") === -1) {
-                    root.gPid = -1
-                    root.checkGCmd = ""
-                    root.requestStartG()
+            } else if (source === root.googlePingCmd) {
+                root.googlePingInFlight = false
+                if (!root.processPingSnapshot(stdout, "google")) {
+                    root.applyPing("google", -1)
+                }
+            } else if (source === root.gatewayPingCmdInFlight) {
+                root.gatewayPingInFlight = false
+                var requestedSource = root.gatewayPingCmdInFlight
+                root.gatewayPingCmdInFlight = ""
+                if (requestedSource === root.gatewayPingCmd) {
+                    if (!root.processPingSnapshot(stdout, "gateway")) {
+                        root.applyPing("gateway", -1)
+                    }
                 }
             }
             executable.disconnectSource(source)
         }
     }
 
-    // Start both persistent ping streams once (second source slightly staggered).
+    // Refresh gateway IP periodically to keep route changes in sync.
     Timer {
-        id: startCfProcess
-        interval: 1
-        running: true
-        repeat: false
-        triggeredOnStart: true
-        onTriggered: root.requestStartCf()
-    }
-
-    Timer {
-        id: startGProcess
-        interval: 500
-        running: true
-        repeat: false
-        triggeredOnStart: false
-        onTriggered: root.requestStartG()
-    }
-
-    // Poll latest output from each long-running ping process.
-    Timer {
-        id: pollCfTimer
-        interval: 1000
-        running: true
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: if (root.cfPid > 0) executable.connectSource(root.pollCfCmd)
-    }
-
-    Timer {
-        id: pollGTimer
-        interval: 1000
-        running: false
-        repeat: true
-        triggeredOnStart: false
-        onTriggered: if (root.gPid > 0) executable.connectSource(root.pollGCmd)
-    }
-
-    Timer {
-        id: startPollG
-        interval: 500
-        running: true
-        repeat: false
-        onTriggered: pollGTimer.start()
-    }
-
-    // Recover from failed starts or dead ping processes (e.g., applet starts offline).
-    Timer {
-        id: processWatchdog
+        id: gatewayRefreshTimer
         interval: 5000
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: {
-            if (root.shuttingDown) {
-                return
-            }
-            if (root.cfPid <= 0) {
-                root.requestStartCf()
-            } else if (root.checkCfCmd.length > 0) {
-                executable.connectSource(root.checkCfCmd)
-            }
-            if (root.gPid <= 0) {
-                root.requestStartG()
-            } else if (root.checkGCmd.length > 0) {
-                executable.connectSource(root.checkGCmd)
-            }
-        }
+        onTriggered: executable.connectSource(root.gatewayQueryCmd)
+    }
+
+    // One-shot ping loop: one provider ping per second (3-second full cycle).
+    Timer {
+        id: pingCycleTimer
+        interval: 1000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: root.requestNextPing()
     }
 
     fullRepresentation: Item {
@@ -313,7 +325,7 @@ PlasmoidItem {
 
                 RowLayout {
                     spacing: 4
-                    Rectangle { width: 12; height: 12; radius: 6; color: root.cfColor }
+                    Rectangle { width: 12; height: 12; radius: 6; color: root.cloudflareColor }
                     Text {
                         text: "1.1.1.1"
                         color: Kirigami.Theme.textColor
@@ -324,9 +336,27 @@ PlasmoidItem {
 
                 RowLayout {
                     spacing: 4
-                    Rectangle { width: 12; height: 12; radius: 6; color: root.gColor }
+                    Rectangle { width: 12; height: 12; radius: 6; color: root.googleColor }
                     Text {
                         text: "8.8.8.8"
+                        color: Kirigami.Theme.textColor
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.75
+                        opacity: 0.8
+                    }
+                }
+
+                RowLayout {
+                    visible: root.gatewayIp.length > 0
+                    spacing: 4
+                    Rectangle {
+                        width: 12
+                        height: 12
+                        radius: 6
+                        color: root.gatewayColor
+                        visible: root.gatewayOnline
+                    }
+                    Text {
+                        text: root.gatewayIp
                         color: Kirigami.Theme.textColor
                         font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.75
                         opacity: 0.8
@@ -376,37 +406,51 @@ PlasmoidItem {
                     readonly property real rightMargin: 58
                     readonly property real chartW: Math.max(0, width - rightMargin)
                     readonly property real chartH: Math.max(0, height - padY * 2)
+                    readonly property real publicRealtimeLabelFontSize: Kirigami.Theme.defaultFont.pixelSize * 1.3
+                    // Gateway has one extra character (e.g. "1.1ms"), so scale down to match public-label width.
+                    readonly property real gatewayRealtimeLabelFontSize: publicRealtimeLabelFontSize * 0.8
                     // 2px sampling halves geometry work while remaining visually smooth.
                     readonly property real sampleStepPx: 2
 
-                    property var cfSamples: []
-                    property var gSamples: []
+                    property var cloudflareSamples: []
+                    property var googleSamples: []
+                    property var gatewaySamples: []
                     property int pointCount: 0
-                    property int cfValidPoints: 0
-                    property int gValidPoints: 0
+                    property int cloudflareValidPoints: 0
+                    property int googleValidPoints: 0
+                    property int gatewayValidPoints: 0
                     property real scrollAccPoints: 0
                     property real lastTickTime: 0
                     property real lastPathScale: -1
 
-                    property string cfPath: ""
-                    property string gPath: ""
+                    property string cloudflarePath: ""
+                    property string googlePath: ""
+                    property string gatewayPath: ""
 
                     property real cachedMax: -1
                     property real cachedMin: -1
                     property int cachedMaxIndex: -1
                     property int cachedMinIndex: -1
-                    property real cachedCfY: -1
-                    property real cachedGY: -1
-                    property real cachedCfLabelY: -1
-                    property real cachedGLabelY: -1
+                    property real cachedCloudflareY: -1
+                    property real cachedGoogleY: -1
+                    property real cachedGatewayY: -1
+                    property real cachedCloudflareLabelY: -1
+                    property real cachedGoogleLabelY: -1
+                    property real cachedGatewayLabelY: -1
+                    property real cachedCloudflareLabelValue: -1
+                    property real cachedGoogleLabelValue: -1
+                    property real cachedGatewayLabelValue: -1
                     property real cachedMaxY: -1
                     property real cachedMinY: -1
-                    readonly property bool idleMode: (cfValidPoints === 0
-                            && gValidPoints === 0
-                            && root.currentPingCf < 0
-                            && root.currentPingG < 0
-                            && root.displayCf < 0
-                            && root.displayG < 0)
+                    readonly property bool idleMode: (cloudflareValidPoints === 0
+                            && googleValidPoints === 0
+                            && gatewayValidPoints === 0
+                            && root.currentCloudflarePing < 0
+                            && root.currentGooglePing < 0
+                            && root.currentGatewayPing < 0
+                            && root.displayCloudflarePing < 0
+                            && root.displayGooglePing < 0
+                            && root.displayGatewayPing < 0)
 
                     function valueChanged(a, b, epsilon) {
                         if (a < 0 && b < 0) {
@@ -424,18 +468,22 @@ PlasmoidItem {
 
                     function ensureBuffers() {
                         var needed = Math.max(8, Math.floor(chartW / sampleStepPx))
-                        if (needed === pointCount && cfSamples.length === needed && gSamples.length === needed) {
+                        if (needed === pointCount && cloudflareSamples.length === needed
+                                && googleSamples.length === needed && gatewaySamples.length === needed) {
                             return false
                         }
                         pointCount = needed
-                        cfSamples = new Array(needed)
-                        gSamples = new Array(needed)
+                        cloudflareSamples = new Array(needed)
+                        googleSamples = new Array(needed)
+                        gatewaySamples = new Array(needed)
                         for (var i = 0; i < needed; ++i) {
-                            cfSamples[i] = -1
-                            gSamples[i] = -1
+                            cloudflareSamples[i] = -1
+                            googleSamples[i] = -1
+                            gatewaySamples[i] = -1
                         }
-                        cfValidPoints = 0
-                        gValidPoints = 0
+                        cloudflareValidPoints = 0
+                        googleValidPoints = 0
+                        gatewayValidPoints = 0
                         scrollAccPoints = 0
                         return true
                     }
@@ -450,40 +498,51 @@ PlasmoidItem {
                         }
 
                         var kept = pointCount - count
-                        var removedCf = 0
-                        var removedG = 0
+                        var removedCloudflare = 0
+                        var removedGoogle = 0
+                        var removedGateway = 0
                         for (var r = 0; r < count; ++r) {
-                            if (cfSamples[r] >= 0 && !isNaN(cfSamples[r])) {
-                                removedCf += 1
+                            if (cloudflareSamples[r] >= 0 && !isNaN(cloudflareSamples[r])) {
+                                removedCloudflare += 1
                             }
-                            if (gSamples[r] >= 0 && !isNaN(gSamples[r])) {
-                                removedG += 1
+                            if (googleSamples[r] >= 0 && !isNaN(googleSamples[r])) {
+                                removedGoogle += 1
+                            }
+                            if (gatewaySamples[r] >= 0 && !isNaN(gatewaySamples[r])) {
+                                removedGateway += 1
                             }
                         }
                         for (var i = 0; i < kept; ++i) {
-                            cfSamples[i] = cfSamples[i + count]
-                            gSamples[i] = gSamples[i + count]
+                            cloudflareSamples[i] = cloudflareSamples[i + count]
+                            googleSamples[i] = googleSamples[i + count]
+                            gatewaySamples[i] = gatewaySamples[i + count]
                         }
 
-                        var cfValue = (root.currentPingCf >= 0 && root.displayCf >= 0) ? root.displayCf : -1
-                        var gValue = (root.currentPingG >= 0 && root.displayG >= 0) ? root.displayG : -1
+                        var cloudflareValue = (root.currentCloudflarePing >= 0 && root.displayCloudflarePing >= 0) ? root.displayCloudflarePing : -1
+                        var googleValue = (root.currentGooglePing >= 0 && root.displayGooglePing >= 0) ? root.displayGooglePing : -1
+                        var gatewayValue = (root.currentGatewayPing >= 0 && root.displayGatewayPing >= 0) ? root.displayGatewayPing : -1
                         for (var j = 0; j < count; ++j) {
-                            cfSamples[kept + j] = cfValue
-                            gSamples[kept + j] = gValue
+                            cloudflareSamples[kept + j] = cloudflareValue
+                            googleSamples[kept + j] = googleValue
+                            gatewaySamples[kept + j] = gatewayValue
                         }
-                        var addedCf = (cfValue >= 0) ? count : 0
-                        var addedG = (gValue >= 0) ? count : 0
-                        cfValidPoints = Math.max(0, cfValidPoints - removedCf + addedCf)
-                        gValidPoints = Math.max(0, gValidPoints - removedG + addedG)
+                        var addedCloudflare = (cloudflareValue >= 0) ? count : 0
+                        var addedGoogle = (googleValue >= 0) ? count : 0
+                        var addedGateway = (gatewayValue >= 0) ? count : 0
+                        cloudflareValidPoints = Math.max(0, cloudflareValidPoints - removedCloudflare + addedCloudflare)
+                        googleValidPoints = Math.max(0, googleValidPoints - removedGoogle + addedGoogle)
+                        gatewayValidPoints = Math.max(0, gatewayValidPoints - removedGateway + addedGateway)
                         return true
                     }
 
                     function rebuildPathsAndExtrema() {
                         var maxVal = Math.max(1, root.axisTopMs())
-                        var cfOut = ""
-                        var gOut = ""
-                        var cfStarted = false
-                        var gStarted = false
+                        var cloudflarePathOutput = ""
+                        var googlePathOutput = ""
+                        var gatewayPathOutput = ""
+                        var cloudflareStarted = false
+                        var googleStarted = false
+                        var gatewayStarted = false
                         var localMax = -Infinity
                         var localMin = Infinity
                         var localMaxIndex = -1
@@ -491,52 +550,66 @@ PlasmoidItem {
 
                         for (var i = 0; i < pointCount; ++i) {
                             var x = i * sampleStepPx
-                            var cfv = cfSamples[i]
-                            var gv = gSamples[i]
+                            var cloudflareSample = cloudflareSamples[i]
+                            var googleSample = googleSamples[i]
+                            var gatewaySample = gatewaySamples[i]
 
-                            if (cfv >= 0 && !isNaN(cfv)) {
-                                var cfy = computeY(cfv, maxVal)
-                                if (cfStarted) {
-                                    cfOut += " L " + x + " " + cfy
+                            if (cloudflareSample >= 0 && !isNaN(cloudflareSample)) {
+                                var cloudflareY = computeY(cloudflareSample, maxVal)
+                                if (cloudflareStarted) {
+                                    cloudflarePathOutput += " L " + x + " " + cloudflareY
                                 } else {
-                                    cfOut += "M " + x + " " + cfy
-                                    cfStarted = true
+                                    cloudflarePathOutput += "M " + x + " " + cloudflareY
+                                    cloudflareStarted = true
                                 }
-                                if (cfv > localMax) {
-                                    localMax = cfv
+                                if (cloudflareSample > localMax) {
+                                    localMax = cloudflareSample
                                     localMaxIndex = i
                                 }
-                                if (cfv < localMin) {
-                                    localMin = cfv
+                                if (cloudflareSample < localMin) {
+                                    localMin = cloudflareSample
                                     localMinIndex = i
                                 }
                             } else {
-                                cfStarted = false
+                                cloudflareStarted = false
                             }
 
-                            if (gv >= 0 && !isNaN(gv)) {
-                                var gy = computeY(gv, maxVal)
-                                if (gStarted) {
-                                    gOut += " L " + x + " " + gy
+                            if (googleSample >= 0 && !isNaN(googleSample)) {
+                                var googleY = computeY(googleSample, maxVal)
+                                if (googleStarted) {
+                                    googlePathOutput += " L " + x + " " + googleY
                                 } else {
-                                    gOut += "M " + x + " " + gy
-                                    gStarted = true
+                                    googlePathOutput += "M " + x + " " + googleY
+                                    googleStarted = true
                                 }
-                                if (gv > localMax) {
-                                    localMax = gv
+                                if (googleSample > localMax) {
+                                    localMax = googleSample
                                     localMaxIndex = i
                                 }
-                                if (gv < localMin) {
-                                    localMin = gv
+                                if (googleSample < localMin) {
+                                    localMin = googleSample
                                     localMinIndex = i
                                 }
                             } else {
-                                gStarted = false
+                                googleStarted = false
+                            }
+
+                            if (gatewaySample >= 0 && !isNaN(gatewaySample)) {
+                                var gatewayY = computeY(gatewaySample, maxVal)
+                                if (gatewayStarted) {
+                                    gatewayPathOutput += " L " + x + " " + gatewayY
+                                } else {
+                                    gatewayPathOutput += "M " + x + " " + gatewayY
+                                    gatewayStarted = true
+                                }
+                            } else {
+                                gatewayStarted = false
                             }
                         }
 
-                        cfPath = cfOut
-                        gPath = gOut
+                        cloudflarePath = cloudflarePathOutput
+                        googlePath = googlePathOutput
+                        gatewayPath = gatewayPathOutput
                         cachedMaxIndex = localMaxIndex
                         cachedMinIndex = localMinIndex
                         cachedMax = (localMaxIndex >= 0) ? localMax : -1
@@ -548,31 +621,79 @@ PlasmoidItem {
 
                     function updateLiveLabels() {
                         var maxVal = Math.max(1, root.axisTopMs())
-                        var cfY = computeY(root.displayCf, maxVal)
-                        var gY = computeY(root.displayG, maxVal)
-                        var fontSize = Kirigami.Theme.defaultFont.pixelSize * 1.5
+                        var cloudflareY = computeY(root.displayCloudflarePing, maxVal)
+                        var googleY = computeY(root.displayGooglePing, maxVal)
+                        var gatewayY = computeY(root.displayGatewayPing, maxVal)
+                        var fontSize = publicRealtimeLabelFontSize
                         var minGap = fontSize + 4
-                        var cfLabelY = cfY
-                        var gLabelY = gY
+                        var topBound = fontSize
+                        var bottomBound = height - 2
+                        if (bottomBound < topBound) {
+                            bottomBound = topBound
+                        }
 
-                        if (cfY >= 0 && gY >= 0 && Math.abs(cfY - gY) < minGap) {
-                            var mid = (cfY + gY) / 2
-                            cfLabelY = mid - minGap / 2
-                            gLabelY = mid + minGap / 2
-                            if (cfLabelY < fontSize) {
-                                cfLabelY = fontSize
-                                gLabelY = cfLabelY + minGap
+                        var labels = []
+                        if (cloudflareY >= 0) {
+                            labels.push({ target: "cloudflare", desiredY: cloudflareY, adjustedY: cloudflareY })
+                        }
+                        if (googleY >= 0) {
+                            labels.push({ target: "google", desiredY: googleY, adjustedY: googleY })
+                        }
+                        if (gatewayY >= 0) {
+                            labels.push({ target: "gateway", desiredY: gatewayY, adjustedY: gatewayY })
+                        }
+                        labels.sort(function(a, b) { return a.desiredY - b.desiredY })
+
+                        for (var i = 0; i < labels.length; ++i) {
+                            var y = labels[i].desiredY
+                            if (i > 0 && y < labels[i - 1].adjustedY + minGap) {
+                                y = labels[i - 1].adjustedY + minGap
                             }
-                            if (gLabelY > height - 2) {
-                                gLabelY = height - 2
-                                cfLabelY = gLabelY - minGap
+                            labels[i].adjustedY = y
+                        }
+
+                        if (labels.length > 0 && labels[labels.length - 1].adjustedY > bottomBound) {
+                            labels[labels.length - 1].adjustedY = bottomBound
+                            for (var j = labels.length - 2; j >= 0; --j) {
+                                var maxAllowed = labels[j + 1].adjustedY - minGap
+                                if (labels[j].adjustedY > maxAllowed) {
+                                    labels[j].adjustedY = maxAllowed
+                                }
+                            }
+                            if (labels[0].adjustedY < topBound) {
+                                labels[0].adjustedY = topBound
+                                for (var k = 1; k < labels.length; ++k) {
+                                    var minAllowed = labels[k - 1].adjustedY + minGap
+                                    if (labels[k].adjustedY < minAllowed) {
+                                        labels[k].adjustedY = minAllowed
+                                    }
+                                }
                             }
                         }
 
-                        cachedCfY = cfY
-                        cachedGY = gY
-                        cachedCfLabelY = cfLabelY
-                        cachedGLabelY = gLabelY
+                        var cloudflareLabelY = -1
+                        var googleLabelY = -1
+                        var gatewayLabelY = -1
+                        for (var m = 0; m < labels.length; ++m) {
+                            var entry = labels[m]
+                            if (entry.target === "cloudflare") {
+                                cloudflareLabelY = entry.adjustedY
+                            } else if (entry.target === "google") {
+                                googleLabelY = entry.adjustedY
+                            } else if (entry.target === "gateway") {
+                                gatewayLabelY = entry.adjustedY
+                            }
+                        }
+
+                        cachedCloudflareY = cloudflareY
+                        cachedGoogleY = googleY
+                        cachedGatewayY = gatewayY
+                        cachedCloudflareLabelY = cloudflareLabelY
+                        cachedGoogleLabelY = googleLabelY
+                        cachedGatewayLabelY = gatewayLabelY
+                        cachedCloudflareLabelValue = (cloudflareY >= 0) ? root.displayCloudflarePing : -1
+                        cachedGoogleLabelValue = (googleY >= 0) ? root.displayGooglePing : -1
+                        cachedGatewayLabelValue = (gatewayY >= 0) ? root.displayGatewayPing : -1
                     }
 
                     onWidthChanged: {
@@ -595,7 +716,7 @@ PlasmoidItem {
 
     Timer {
         id: chartUpdateTimer
-        interval: chartView.idleMode ? 2000 : 500
+        interval: 1000
         repeat: true
         running: chartView.visible
                         onTriggered: {
@@ -610,8 +731,9 @@ PlasmoidItem {
                             if (chartView.idleMode) {
                                 return
                             }
-                            var oldCf = root.displayCf
-                            var oldG = root.displayG
+                            var oldCloudflarePing = root.displayCloudflarePing
+                            var oldGooglePing = root.displayGooglePing
+                            var oldGatewayPing = root.displayGatewayPing
                             var oldAxisTop = root.axisTopMs()
 
                             var maxDelta = root.maxPing - root.displayMaxPing
@@ -642,11 +764,14 @@ PlasmoidItem {
                             }
 
                             var visibleMax = chartView.cachedMax
-                            if (root.displayCf > visibleMax) {
-                                visibleMax = root.displayCf
+                            if (root.displayCloudflarePing > visibleMax) {
+                                visibleMax = root.displayCloudflarePing
                             }
-                            if (root.displayG > visibleMax) {
-                                visibleMax = root.displayG
+                            if (root.displayGooglePing > visibleMax) {
+                                visibleMax = root.displayGooglePing
+                            }
+                            if (root.displayGatewayPing > visibleMax) {
+                                visibleMax = root.displayGatewayPing
                             }
                             if (visibleMax < 0) {
                                 visibleMax = 100
@@ -655,8 +780,9 @@ PlasmoidItem {
 
                             if (rebuilt
                                     || axisChanged
-                                    || chartView.valueChanged(oldCf, root.displayCf, 0.2)
-                                    || chartView.valueChanged(oldG, root.displayG, 0.2)) {
+                                    || chartView.valueChanged(oldCloudflarePing, root.displayCloudflarePing, 0.2)
+                                    || chartView.valueChanged(oldGooglePing, root.displayGooglePing, 0.2)
+                                    || chartView.valueChanged(oldGatewayPing, root.displayGatewayPing, 0.2)) {
                                 chartView.updateLiveLabels()
                             }
                         }
@@ -683,21 +809,30 @@ PlasmoidItem {
                         layer.samples: 4
 
                         ShapePath {
-                            strokeColor: root.cfColor
+                            strokeColor: root.cloudflareColor
                             strokeWidth: 2
                             fillColor: "transparent"
                             capStyle: ShapePath.RoundCap
                             joinStyle: ShapePath.RoundJoin
-                            PathSvg { path: chartView.cfPath }
+                            PathSvg { path: chartView.cloudflarePath }
                         }
 
                         ShapePath {
-                            strokeColor: root.gColor
+                            strokeColor: root.googleColor
                             strokeWidth: 2
                             fillColor: "transparent"
                             capStyle: ShapePath.RoundCap
                             joinStyle: ShapePath.RoundJoin
-                            PathSvg { path: chartView.gPath }
+                            PathSvg { path: chartView.googlePath }
+                        }
+
+                        ShapePath {
+                            strokeColor: root.gatewayColor
+                            strokeWidth: 2
+                            fillColor: "transparent"
+                            capStyle: ShapePath.RoundCap
+                            joinStyle: ShapePath.RoundJoin
+                            PathSvg { path: chartView.gatewayPath }
                         }
                     }
 
@@ -771,44 +906,65 @@ PlasmoidItem {
 
                     Rectangle {
                         parent: blurScene
-                        visible: chartView.cachedCfY >= 0
+                        visible: chartView.cachedCloudflareY >= 0
                         width: 10
                         height: 10
                         radius: 5
-                        color: root.cfColor
+                        color: root.cloudflareColor
                         x: chartView.chartW - width / 2
-                        y: chartView.cachedCfY - height / 2
+                        y: chartView.cachedCloudflareY - height / 2
                     }
 
                     Text {
                         parent: blurScene
-                        visible: chartView.cachedCfY >= 0
-                        text: Math.round(root.displayCf) + "ms"
-                        color: root.cfColor
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.5
+                        visible: chartView.cachedCloudflareY >= 0
+                        text: Math.round(chartView.cachedCloudflareLabelValue) + "ms"
+                        color: root.cloudflareColor
+                        font.pixelSize: chartView.publicRealtimeLabelFontSize
                         x: chartView.chartW + 6
-                        y: chartView.cachedCfLabelY - height / 2
+                        y: chartView.cachedCloudflareLabelY - height / 2
                     }
 
                     Rectangle {
                         parent: blurScene
-                        visible: chartView.cachedGY >= 0
+                        visible: chartView.cachedGoogleY >= 0
                         width: 10
                         height: 10
                         radius: 5
-                        color: root.gColor
+                        color: root.googleColor
                         x: chartView.chartW - width / 2
-                        y: chartView.cachedGY - height / 2
+                        y: chartView.cachedGoogleY - height / 2
                     }
 
                     Text {
                         parent: blurScene
-                        visible: chartView.cachedGY >= 0
-                        text: Math.round(root.displayG) + "ms"
-                        color: root.gColor
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.5
+                        visible: chartView.cachedGoogleY >= 0
+                        text: Math.round(chartView.cachedGoogleLabelValue) + "ms"
+                        color: root.googleColor
+                        font.pixelSize: chartView.publicRealtimeLabelFontSize
                         x: chartView.chartW + 6
-                        y: chartView.cachedGLabelY - height / 2
+                        y: chartView.cachedGoogleLabelY - height / 2
+                    }
+
+                    Rectangle {
+                        parent: blurScene
+                        visible: chartView.cachedGatewayY >= 0
+                        width: 10
+                        height: 10
+                        radius: 5
+                        color: root.gatewayColor
+                        x: chartView.chartW - width / 2
+                        y: chartView.cachedGatewayY - height / 2
+                    }
+
+                    Text {
+                        parent: blurScene
+                        visible: chartView.cachedGatewayY >= 0
+                        text: chartView.cachedGatewayLabelValue.toFixed(1) + "ms"
+                        color: root.gatewayColor
+                        font.pixelSize: chartView.gatewayRealtimeLabelFontSize
+                        x: chartView.chartW + 6
+                        y: chartView.cachedGatewayLabelY - height / 2
                     }
                 }
             }
@@ -818,7 +974,7 @@ PlasmoidItem {
                 Layout.preferredHeight: Math.ceil(font.pixelSize * 1.05)
                 horizontalAlignment: Text.AlignLeft
                 verticalAlignment: Text.AlignVCenter
-                text: "last ping received: " + root.lastPingReceivedText
+                text: "Last Internet Ping Received: " + root.lastPingReceivedText
                 color: Qt.rgba(1, 1, 1, 0.45)
                 font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.75
                 opacity: 1
@@ -827,24 +983,17 @@ PlasmoidItem {
     }
 
     Component.onDestruction: {
-        // Explicitly stop/teardown long-lived ping sources and timers.
+        // Explicitly stop timers and disconnect any in-flight one-shot commands.
         shuttingDown = true
-        try { if (startCfProcess) startCfProcess.stop() } catch (e) {}
-        try { if (startGProcess) startGProcess.stop() } catch (e) {}
-        try { if (pollCfTimer) pollCfTimer.stop() } catch (e) {}
-        try { if (pollGTimer) pollGTimer.stop() } catch (e) {}
-        try { if (startPollG) startPollG.stop() } catch (e) {}
-        try { if (processWatchdog) processWatchdog.stop() } catch (e) {}
-        try { executable.disconnectSource(startCfCmd) } catch (e) {}
-        try { executable.disconnectSource(startGCmd) } catch (e) {}
-        try { executable.disconnectSource(pollCfCmd) } catch (e) {}
-        try { executable.disconnectSource(pollGCmd) } catch (e) {}
-        if (cfPid > 0) {
-            try { executable.connectSource("sh -c 'kill " + cfPid + " 2>/dev/null || true'") } catch (e) {}
-        }
-        if (gPid > 0) {
-            try { executable.connectSource("sh -c 'kill " + gPid + " 2>/dev/null || true'") } catch (e) {}
-        }
-        try { executable.connectSource("sh -c 'rm -f " + cfLogPath + " " + gLogPath + " 2>/dev/null || true'") } catch (e) {}
+        try { if (gatewayRefreshTimer) gatewayRefreshTimer.stop() } catch (e) {}
+        try { if (pingCycleTimer) pingCycleTimer.stop() } catch (e) {}
+        try { executable.disconnectSource(gatewayQueryCmd) } catch (e) {}
+        try { executable.disconnectSource(cloudflarePingCmd) } catch (e) {}
+        try { executable.disconnectSource(googlePingCmd) } catch (e) {}
+        try { if (gatewayPingCmdInFlight.length > 0) executable.disconnectSource(gatewayPingCmdInFlight) } catch (e) {}
+        cloudflarePingInFlight = false
+        googlePingInFlight = false
+        gatewayPingInFlight = false
+        gatewayPingCmdInFlight = ""
     }
 }
