@@ -5,11 +5,11 @@ KDE Plasma 6 widget that monitors latency to:
 - Google DNS (`8.8.8.8`)
 - Your default gateway (optional, auto-detected)
 
-It renders a rolling 30-second latency chart with live value labels.
+It renders a rolling 90-second latency chart with live value labels.
 
 ## Features
 
-- Rolling 30s RTT chart for internet and gateway targets
+- Rolling 90s RTT chart for internet and gateway targets
 - Public ping cadence: 1 second per host, staggered by 500 ms
 - Gateway ping cadence: 500 ms
 - Automatic stale-stream recovery for public ping processes
@@ -32,7 +32,7 @@ It renders a rolling 30-second latency chart with live value labels.
 ### Method 2: Install local `.plasmoid` package
 
 ```bash
-kpackagetool6 --type Plasma/Applet --install /path/to/org.kde.plasma.pingmonitor-1.0.1.plasmoid
+kpackagetool6 --type Plasma/Applet --install /path/to/org.kde.plasma.pingmonitor-1.0.2.plasmoid
 ```
 
 Use `--upgrade` instead of `--install` to update an existing install.

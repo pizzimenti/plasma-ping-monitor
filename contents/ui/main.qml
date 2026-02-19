@@ -37,7 +37,7 @@ PlasmoidItem {
     property real gatewayTo: -1
     property real gatewayStartTime: 0
 
-    readonly property real windowSecs: 30
+    readonly property real windowSecs: 90
     readonly property int gridIntervals: 2
     readonly property int gridLineCount: gridIntervals + 1
 
@@ -46,6 +46,11 @@ PlasmoidItem {
     readonly property color gatewayColor: "#4aa3ff"
 
     property bool shuttingDown: false
+    readonly property bool samplingActive: !shuttingDown
+            && visible
+            && width > 0
+            && height > 0
+            && (window ? window.visible : true)
 
     // One-shot ping commands, launched by timers.
     readonly property string gatewayQueryCmd: "sh -c 'ip route show default 2>/dev/null | awk '\\''/default/ {print $3; exit}'\\'''"
@@ -65,7 +70,7 @@ PlasmoidItem {
         if (cloudflarePingInFlight) {
             return
         }
-        if (!shuttingDown) {
+        if (samplingActive) {
             cloudflarePingInFlight = true
             executable.connectSource(cloudflarePingCmd)
         }
@@ -75,7 +80,7 @@ PlasmoidItem {
         if (googlePingInFlight) {
             return
         }
-        if (!shuttingDown) {
+        if (samplingActive) {
             googlePingInFlight = true
             executable.connectSource(googlePingCmd)
         }
@@ -85,7 +90,7 @@ PlasmoidItem {
         if (gatewayPingInFlight) {
             return
         }
-        if (!shuttingDown && gatewayIp.length > 0 && gatewayPingCmd.length > 0) {
+        if (samplingActive && gatewayIp.length > 0 && gatewayPingCmd.length > 0) {
             gatewayPingInFlight = true
             gatewayPingCmdInFlight = gatewayPingCmd
             executable.connectSource(gatewayPingCmdInFlight)
@@ -93,6 +98,9 @@ PlasmoidItem {
     }
 
     function requestNextPing() {
+        if (!samplingActive) {
+            return
+        }
         var target = pingCycleIndex
         pingCycleIndex = (pingCycleIndex + 1) % 3
 
@@ -199,6 +207,17 @@ PlasmoidItem {
 
     }
 
+    function cancelInFlightCommands() {
+        try { executable.disconnectSource(gatewayQueryCmd) } catch (e) {}
+        try { executable.disconnectSource(cloudflarePingCmd) } catch (e) {}
+        try { executable.disconnectSource(googlePingCmd) } catch (e) {}
+        try { if (gatewayPingCmdInFlight.length > 0) executable.disconnectSource(gatewayPingCmdInFlight) } catch (e) {}
+        cloudflarePingInFlight = false
+        googlePingInFlight = false
+        gatewayPingInFlight = false
+        gatewayPingCmdInFlight = ""
+    }
+
     function processPingLine(line, target) {
         if (!line || line.length === 0) {
             return false
@@ -283,20 +302,32 @@ PlasmoidItem {
     Timer {
         id: gatewayRefreshTimer
         interval: 5000
-        running: true
+        running: root.samplingActive
         repeat: true
         triggeredOnStart: true
-        onTriggered: executable.connectSource(root.gatewayQueryCmd)
+        onTriggered: {
+            if (root.samplingActive) {
+                executable.connectSource(root.gatewayQueryCmd)
+            }
+        }
     }
 
     // One-shot ping loop: one provider ping per second (3-second full cycle).
     Timer {
         id: pingCycleTimer
         interval: 1000
-        running: true
+        running: root.samplingActive
         repeat: true
         triggeredOnStart: true
-        onTriggered: root.requestNextPing()
+        onTriggered: {
+            root.requestNextPing()
+        }
+    }
+
+    onSamplingActiveChanged: {
+        if (!samplingActive) {
+            cancelInFlightCommands()
+        }
     }
 
     fullRepresentation: Item {
@@ -718,7 +749,7 @@ PlasmoidItem {
         id: chartUpdateTimer
         interval: 1000
         repeat: true
-        running: chartView.visible
+        running: chartView.visible && root.samplingActive
                         onTriggered: {
                             var now = Date.now()
                             if (chartView.lastTickTime === 0) {
@@ -987,13 +1018,6 @@ PlasmoidItem {
         shuttingDown = true
         try { if (gatewayRefreshTimer) gatewayRefreshTimer.stop() } catch (e) {}
         try { if (pingCycleTimer) pingCycleTimer.stop() } catch (e) {}
-        try { executable.disconnectSource(gatewayQueryCmd) } catch (e) {}
-        try { executable.disconnectSource(cloudflarePingCmd) } catch (e) {}
-        try { executable.disconnectSource(googlePingCmd) } catch (e) {}
-        try { if (gatewayPingCmdInFlight.length > 0) executable.disconnectSource(gatewayPingCmdInFlight) } catch (e) {}
-        cloudflarePingInFlight = false
-        googlePingInFlight = false
-        gatewayPingInFlight = false
-        gatewayPingCmdInFlight = ""
+        cancelInFlightCommands()
     }
 }
