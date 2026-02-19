@@ -1,45 +1,108 @@
-# Ping Monitor (plasmoid)
+# Ping Monitor
 
-A small KDE Plasma plasmoid that pings two hosts (1.1.1.1 and 8.8.8.8) and displays a 30s RTT chart.
+KDE Plasma 6 widget that monitors latency to:
+- Cloudflare (`1.1.1.1`)
+- Google DNS (`8.8.8.8`)
+- Your default gateway (optional, auto-detected)
 
-Development
-- Edit sources in `~/Code/org.kde.plasma.pingmonitor` (this is the development copy).
-- Fast preview without installing:
-  - `plasmoidviewer ~/Code/org.kde.plasma.pingmonitor` — open the plasmoid in a window and view QML errors.
-  - `plasmawindowed ~/Code/org.kde.plasma.pingmonitor` — run windowed for quick interactive testing.
+It renders a rolling 30-second latency chart with live value labels.
 
-Install / Use on your desktop
-1. (Optional) Remove any currently installed copy:
-   ```bash
-   plasmapkg2 --remove org.kde.plasma.pingmonitor || true
-   ```
-2. Install the development copy so Plasma will load it from your home:
-   ```bash
-   plasmapkg2 --install ~/Code/org.kde.plasma.pingmonitor
-   ```
-3. Add it to your desktop: Right-click → Enter Edit Mode → Add Widgets → search for "Ping Monitor" and drag it to the desktop.
+## Features
 
-Live development options
-- Symlink method (Plasma will read files from your repo path):
-  ```bash
-  mv ~/.local/share/plasma/plasmoids/org.kde.plasma.pingmonitor ~/.local/share/plasma/plasmoids/org.kde.plasma.pingmonitor.orig
-  ln -s ~/Code/org.kde.plasma.pingmonitor ~/.local/share/plasma/plasmoids/org.kde.plasma.pingmonitor
-  kquitapp5 plasmashell && kstart5 plasmashell
-  ```
-  Restart `plasmashell` after major QML changes to ensure the shell reloads updated QML.
+- Rolling 30s RTT chart for internet and gateway targets
+- Public ping cadence: 1 second per host, staggered by 500 ms
+- Gateway ping cadence: 500 ms
+- Automatic stale-stream recovery for public ping processes
+- Max/min markers for internet series (gateway excluded)
 
-Uninstall
-- Remove the installed plasmoid:
-  ```bash
-  plasmapkg2 --remove org.kde.plasma.pingmonitor
-  ```
+## Requirements
 
-Troubleshooting
-- If `plasmoidviewer` shows QML errors, paste them into the issue/PR or report them here.
-- If the widget doesn't appear in the Add Widgets list after installing, restart plasmashell or log out/in.
+- KDE Plasma 6
+- `kpackagetool6`
+- `ping` and `ip` (typically provided by `iputils` and `iproute2`)
 
-Contributing
-- This repo is tracked with git; please open issues or PRs if you want to collaborate.
+## Installation
 
-License
-- MIT (see `LICENSE`)
+### Method 1: KDE Store (recommended)
+
+1. Right-click Desktop or Panel -> Add Widgets.
+2. Click `Get New Widgets...`.
+3. Search for `Ping Monitor` and install.
+
+### Method 2: Install local `.plasmoid` package
+
+```bash
+kpackagetool6 --type Plasma/Applet --install /path/to/org.kde.plasma.pingmonitor-1.0.1.plasmoid
+```
+
+Use `--upgrade` instead of `--install` to update an existing install.
+
+### Method 3: Install from source checkout
+
+```bash
+git clone https://github.com/pizzimenti/plasma-ping-monitor.git
+cd plasma-ping-monitor
+kpackagetool6 --type Plasma/Applet --upgrade . || kpackagetool6 --type Plasma/Applet --install .
+```
+
+Then reload Plasma Shell:
+
+```bash
+systemctl --user restart plasma-plasmashell.service
+```
+
+## Usage
+
+1. Right-click Desktop or Panel -> Add Widgets.
+2. Search for `Ping Monitor`.
+3. Add it to your desktop or panel.
+
+## Development
+
+Quick preview:
+
+```bash
+plasmawindowed .
+# or
+plasmoidviewer .
+```
+
+Lint QML:
+
+```bash
+qmllint contents/ui/main.qml
+```
+
+After major QML or metadata changes:
+
+```bash
+systemctl --user restart plasma-plasmashell.service
+```
+
+## Packaging
+
+Create a distributable package:
+
+```bash
+bsdtar -a -cf org.kde.plasma.pingmonitor-<version>.plasmoid metadata.json contents README.md LICENSE
+```
+
+## Uninstall
+
+```bash
+kpackagetool6 --type Plasma/Applet --remove org.kde.plasma.pingmonitor
+```
+
+## Troubleshooting
+
+- Widget not visible after install:
+  - `kbuildsycoca6`
+  - `systemctl --user restart plasma-plasmashell.service`
+- Validate package metadata:
+  - `kpackagetool6 --type Plasma/Applet --show org.kde.plasma.pingmonitor`
+- Validate UI syntax:
+  - `qmllint contents/ui/main.qml`
+
+## License
+
+MIT (see `LICENSE`)
