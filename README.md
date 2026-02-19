@@ -42,4 +42,4 @@ Contributing
 - This repo is tracked with git; please open issues or PRs if you want to collaborate.
 
 License
-- (Add license text or file if desired)
+- MIT (see `LICENSE`)
