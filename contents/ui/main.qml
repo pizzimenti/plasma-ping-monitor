@@ -48,9 +48,7 @@ PlasmoidItem {
     property bool shuttingDown: false
     readonly property bool samplingActive: !shuttingDown
             && visible
-            && width > 0
-            && height > 0
-            && (window ? window.visible : true)
+            && Plasmoid.status !== PlasmaCore.Types.HiddenStatus
 
     // One-shot ping commands, launched by timers.
     readonly property string gatewayQueryCmd: "sh -c 'ip route show default 2>/dev/null | awk '\\''/default/ {print $3; exit}'\\'''"
